@@ -1,12 +1,14 @@
 
-from .. import Viewer, Message, Stream, StreamChat
-from . import Command
-
 from __future__ import annotations
 from typing import TYPE_CHECKING
+from ..users import Viewer
+from ..messaging import Message
+from ..streams import Stream, StreamChat
+from . import Command
+
 
 if TYPE_CHECKING:
-    from .. import Client
+    from ..clients import Client
 
 
 class Context:

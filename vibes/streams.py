@@ -1,5 +1,9 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .messaging import Message
 import datetime, httpx
-from .messaging import Message
 from .models import PremiumSubscription
 
 class StreamCategory:
@@ -42,9 +46,14 @@ class StreamChat:
         """Send a text message in the stream chat."""
         c: httpx.AsyncClient = self.stream._client.client
         response = await c.post(f'channels/{self.stream.channel.username}/messages', json={'content': content})
-        print("--------- RESPONSE", response.json())
         response.raise_for_status()
 
+        # TODO make sure response is proper
+        data = response.json()
 
-        return Message(data, self.stream._client) # TODO
+        data['stream'] = self.stream
+
+
+
+        return Message(data, self.stream._client) #
 

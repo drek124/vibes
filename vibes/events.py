@@ -1,4 +1,4 @@
-from .users import User
+from .users import User, Viewer
 from .commands import CommandError
 from .streams import Stream
 from .donations import Donation
@@ -53,7 +53,9 @@ async def chat_message(client, handlers: list, message: dict):
     streamer: User = await client.fetch_user(data['streamerId'])
     data['streamer'] = streamer
     data['stream'] = streamer.stream
-    data['author'] = await client.fetch_user(data['user']['id'])
+
+    author = await client.fetch_user(data['user']['id'], raw=True)
+    data['author'] = Viewer(author | data['user'], client)
 
     if data.get('replyTo'):
         rauthor = await client.fetch_user(data['replyTo']['username'])

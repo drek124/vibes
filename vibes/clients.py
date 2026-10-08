@@ -154,14 +154,14 @@ class PassiveClient:
         
         return [Stream(i, self) for i in data.get('data', [])]
 
-    async def fetch_user(self, slug: str) -> User | None:
+    async def fetch_user(self, slug: str, **kwargs) -> User | None:
         "Fetch a user by their username, or ID."
         now = datetime.datetime.now()
         slug = slug.lower()
         if slug in CACHED_USERS:
             last: datetime.datetime = CACHED_USERS[slug]['time']
             if (now - last).total_seconds() <= CACHED_USERS_EXPIRY:
-                return CACHED_USERS[slug]['obj']
+                return CACHED_USERS[slug]['obj' if not kwargs.get('raw') else 'raw']
             
         response = await self.client.get(
             'channels/' + slug)
@@ -171,8 +171,10 @@ class PassiveClient:
         response.raise_for_status()
 
         data = response.json()
+        if kwargs.get('raw'):
+            return data
         obj = User(data.get('data', {}), self)
-        CACHED_USERS[obj.id] = CACHED_USERS[obj.username] = {'time': now, 'obj': obj} # Caching to reduce API calls
+        CACHED_USERS[obj.id] = CACHED_USERS[obj.username] = {'time': now, 'obj': obj, 'raw': data} # Caching to reduce API calls
         return obj
         
 
@@ -293,23 +295,23 @@ class Client(PassiveClient):
             async for message in ws:
                 try:
                     data: dict = json.loads(message)
+                    logging.info(message)
                     event_type = data.get('type')
-                    to_call = []
 
-
-
+                    
                     if event_type == 'reconnect':
                         _data = data['data']
                         reason = _data.get('reason', 'Unknown reason')
                         logging.info(f"Reconnect requested by server; Reason: \"{reason}\". Reconnecting...")
                         await self._reconnect()
 
-                    
+                    try:
 
-                    await self._trigevent(type=event_type, data=data)
+                        await self._trigevent(type=event_type, data=data)
 
-                    
-
+                    except Exception as e:
+                        tb_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+                        logging.critical(f"Error occurred in preparation of background task:\n{tb_str}")
 
                 except json.JSONDecodeError:
                     logging.warning("Failed to parse non-JSON message:" + str(message))
@@ -322,7 +324,8 @@ class Client(PassiveClient):
         if event_type in self._event_handlers:
             handler = EVENT_HANDLERS.get(event_type, _default_event_handler)
             to_call: list = await handler(self, self._event_handlers[event_type], data)
-
+        else:
+            to_call = []
 
 
         if '_debug_' in self._event_handlers:

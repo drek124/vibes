@@ -5,9 +5,8 @@ import types
 from inspect import Parameter
 from typing import get_args, get_origin, Union
 
-from vibes.commands.errors import CommandError
 from .params import _ALLOWED_CLASSES
-from .. import Role
+from ..users import Role
 from typing import Callable
 
 

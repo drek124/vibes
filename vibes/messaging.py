@@ -4,8 +4,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .streams import Stream
 
-import datetime
 from .users import User, Viewer
+
+import datetime
 
 
 class MessageReference:
@@ -24,8 +25,7 @@ class Message:
         self.stream: Stream = data.get('stream')
         self.content: str = data.get('content')
 
-        data['author']['stream'] = self.stream
-        self.author: Viewer = Viewer(data['author'], c)
+        self.author: Viewer = data['author']
         self.reference: MessageReference | None = MessageReference(data['replyTo']) if data.get('replyTo') else None
         self.type: str = data.get('type')
         self.platform: str = data.get('platform')

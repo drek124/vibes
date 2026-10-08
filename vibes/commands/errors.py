@@ -1,6 +1,6 @@
 from .commands import CommandParameter
 from .context import Context
-from .. import Role
+from ..users import Role
 import drekord
 
 class CommandError(Exception):
