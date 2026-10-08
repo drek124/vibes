@@ -1,10 +1,14 @@
 from .users import User
+from .commands import CommandError
 from .streams import Stream
 from .donations import Donation
 from .messaging import Message
 from .cache import CACHED_MESSAGES, CACHED_USERS, CACHED_USERS_EXPIRY
 
 ALTERNATIVES = {
+
+    # --- VIBES events ---
+
     'on_connect': 'connected',
     'on_viewer_join': 'new_viewer',
     'on_viewer_leave': 'viewer_left',
@@ -12,11 +16,20 @@ ALTERNATIVES = {
     'on_stream_like': 'new_like',
     'on_donation': 'new_donation',
     'on_message': 'chat_message',
-    'on_message_delete': 'chat_message_deleted'
+    'on_message_delete': 'chat_message_deleted',
+
+
+    # --- Library events ---
+
+    'on_command_error': 'command_error'
 
 }
 
-
+async def command_error(client, handlers: list, message: dict):
+    e: CommandError = message['error']
+    return [
+        c(e) for c in handlers
+    ]
 
 
 async def chat_message_deleted(client, handlers: list, message: dict):

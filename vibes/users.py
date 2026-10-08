@@ -1,6 +1,7 @@
 
 
 import datetime
+from functools import total_ordering
 from typing import Literal
 
 from .models import PremiumSubscription
@@ -59,11 +60,19 @@ class Viewer(User):
 
         self.display_name: str = data.get('displayName')
         self.avatar_url: str = data.get('avatarUrl')
+        self.attending_stream: Stream = data.get('stream')
         role = data.get('role', 'viewer')
-        self.role: Literal['viewer', 'moderator', 'streamer'] = data.get('role') 
+        self.role: Role = data.get('role') 
         self.bot: bool = data.get('bot')
 
+    @property
+    def viewer_id(self) -> str:
+        """Get the viewer ID in the stream.
+        *Useful for background tasks regarding a per-stream user check*
+        """
+        return '-'.join([self.attending_stream.id, self.id])
 
+@total_ordering
 class Role:
 
     VIEWER: Role = ...
@@ -73,6 +82,20 @@ class Role:
     def __init__(self, data: dict):
         self.name: str = data['name']
         self.level: int = ROLE_LEVELS.get(self.name, 0)
+
+
+    def __eq__(self, other):
+        if not isinstance(other, Role):
+            return NotImplemented
+        return self.level == other.level
+
+    def __lt__(self, other):
+        if not isinstance(other, Role):
+            return NotImplemented
+        return self.level < other.level
+
+    def __str__(self):
+        return self.name
 
 Role.VIEWER = Role({'name': 'viewer'})
 Role.MOD = Role({'name': 'moderator'})

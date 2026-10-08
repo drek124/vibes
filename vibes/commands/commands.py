@@ -1,12 +1,19 @@
 
-from typing import Callable
-MISSING = object()
 
 import inspect
-from inspect import _empty
+import types
+from inspect import Parameter
 from typing import get_args, get_origin, Union
-from .params import ALLOWED_CLASSES
+
+from vibes.commands.errors import CommandError
+from .params import _ALLOWED_CLASSES
 from .. import Role
+from typing import Callable
+
+
+MISSING = object()
+
+_UNION_ORIGINS = (Union, types.UnionType)
 
 class Command:
     """A VIBES chat command."""
@@ -14,7 +21,7 @@ class Command:
         
         self.name: str = data['name']
         self.callback = data['callback']
-        self.role: Role = data['role']
+        self.required_role: Role = data['required_role']
         self.parameters: list[CommandParameter] = data['params']
 
 
@@ -24,13 +31,18 @@ class Command:
     def __str__(self):
         return self.name
 
-COMMANDS: list[Command] = []
+_COMMANDS: list[Command] = []
 
 class CommandParameter:
     def __init__(self, **data):
         self.name: str = data['name']
         self.required: bool = data['required']
         self._type = data['type']
+
+        self._process = _ALLOWED_CLASSES[self._type]
+
+    async def _process(self, text: str):
+        raise NotImplementedError() # This shouldn't be raised anyway
 
 
 
@@ -46,7 +58,7 @@ def command(name: str = MISSING, *, role: Role = Role.VIEWER):
         await ctx.reply(f"Hello, {name}! You have {ctx.user.followers} followers!")
 
     @commands.command(role=Role.MOD) # Only moderators & higher can access
-    async def ping(ctx):
+    async def ping(ctx): # Must have the first parameter reserved for context
         await ctx.reply("Pong!")
     ```"""
 
@@ -58,7 +70,7 @@ def command(name: str = MISSING, *, role: Role = Role.VIEWER):
             name = name.lower()
 
 
-        for command in COMMANDS:
+        for command in _COMMANDS:
             if command.name == name:
                 raise ValueError(f"The command \"{name}\" already exists.")
 
@@ -66,24 +78,40 @@ def command(name: str = MISSING, *, role: Role = Role.VIEWER):
 
         processed_params: list[CommandParameter] = []
 
-        for pname, param in params.items():
+        for i, pname, param in enumerate(params.items()):
 
+            if i == 0: # Ignore the "ctx" param
+                continue
+
+            if param.kind not  in (Parameter.POSITIONAL_ONLY, Parameter.POSITIONAL_OR_KEYWORD):
+                raise ValueError("A command callback can't process \"*args\" or \"*kwargs\" parameters")
+
+            if param.kind is Parameter.KEYWORD_ONLY:
+                raise ValueError("A command callback musn't have non-positional arguments.")
+
+
+            
             ptype = param.annotation
 
-            origin = get_origin(ptype)
-            if origin is Union or origin is __import__("types").UnionType:
-                types_list = get_args(ptype)
+            if ptype is Parameter.empty:  
+                ptype = str
 
-                ptype = types_list[0] # get the first type
+            else:
 
-            inner_origin = get_origin(ptype)
-            if inner_origin is not None:
-                ptype = inner_origin
+                origin = get_origin(ptype)
+                if origin in _UNION_ORIGINS:
+                    types_list = get_args(ptype)
 
-            if ptype not in ALLOWED_CLASSES:
-                raise ValueError(f"Unknown parameter type \"{ptype}\" for \"{pname}\"")
+                    ptype = types_list[0] 
+
+                inner_origin = get_origin(ptype)
+                if inner_origin is not None:
+                    ptype = inner_origin
+
+                if ptype not in _ALLOWED_CLASSES:
+                    raise ValueError(f"Unknown parameter type \"{ptype}\" for \"{pname}\"")
             
-            required: bool = param.default is _empty
+            required: bool = param.default is Parameter.empty
 
             processed_params.append(
                 CommandParameter(
@@ -94,7 +122,7 @@ def command(name: str = MISSING, *, role: Role = Role.VIEWER):
             )
 
 
-        COMMANDS.append(Command(name=name, callback=func, role=role, params=processed_params))
+        _COMMANDS.append(Command(name=name, callback=func, required_role=role, params=processed_params))
 
         def wrapper(*args, **kwargs):
             return func(*args, **kwargs)

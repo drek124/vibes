@@ -3,7 +3,6 @@ import traceback
 import asyncio
 import httpx
 import datetime
-from torch import Value
 import websockets
 import logging
 from typing import Callable
@@ -11,6 +10,16 @@ from .streams import Stream, StreamCategory, StreamChannel
 from .users import User, ClientUser
 from .cache import CACHED_USERS, CACHED_USERS_EXPIRY
 from .messaging import Message
+from .commands import (
+    CommandError, 
+    NoPermission, 
+    BadArgument, 
+    MissingArguments, 
+    CommandNotFound, 
+    Command,
+    Context,
+    _COMMANDS
+)
 from . import events
 
 BASE_URL = 'https://backend.vibes.stream/api/v1/'
@@ -44,7 +53,7 @@ EVENT_HANDLERS = {
     "chat_message": events.chat_message,
     'chat_message_deleted': events.chat_message_deleted,
 
-
+    "command_error": events.command_error,
     "_debug_": events.debug_websocket
 
 }
@@ -329,7 +338,66 @@ class Client(PassiveClient):
                     logging.error(f"Error occurred in background task:\n{tb_str}")
                     
 
-    async def process_commands(message: Message):
+    async def process_commands(self, message: Message):
         """Process a text command.
-        The client does checks to validate user input
+        The client does checks to validate user input; use `on_command_error(error: CommandError | Exception)` event listener to follow-up & send feedback.
         """
+        try:
+            if self.prefix is None:
+                raise NotImplementedError("Can't process a command without a command prefix present")
+            
+            if not message.content.startswith(self.prefix):
+                return
+            
+            content = message.content[len(self.prefix):].split(' ')
+            command: Command = next((c for c in _COMMANDS if c.name == content[0]), None)
+            ctx = {
+                'message': message,
+                'client': self
+            }
+
+            if command is None:
+                raise CommandNotFound(ctx=Context(ctx)) 
+            ctx['command'] = command
+            context = Context(ctx)
+            content.remove(content[0])
+
+            if message.author.role < command.required_role:
+                raise NoPermission(ctx=context)
+
+            params = command.parameters
+            if len(content) < len([p for p in params if p.required]):
+                raise MissingArguments(ctx=context)
+
+            diff = len(content) - len(params)
+            if diff > 0: # If split is out of range of the command params
+                _reserve = []
+                for ii, item in enumerate(content.copy(), 1):
+                    if ii <= len(content) - diff:
+                        _reserve.append(item)
+                        content.remove(item)
+                content = _reserve + [' '.join(content)]
+
+            _to_pass = [context]
+
+            for ii, item in enumerate(content):
+                try:
+                    param = params[ii]
+                    conversion = await param._process(item)
+                    _to_pass.append(conversion)
+
+                except (ValueError):
+                    raise BadArgument(ctx=context, badarg=param)
+
+        except CommandError as e:
+            # If there are no on_command_error listeners, swallow user-input related exceptions B)
+            await self._trigevent(type='command_error', data={'error': e})
+            
+        except Exception as e:
+            # Logic exceptions need to be shown to the developer
+            if 'command_error' in self._event_handlers:
+                await self._trigevent(type='command_error', data={'error': e})
+                return
+            
+            tb_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+            logging.error(f"Error occurred in command execution:\n{tb_str}")

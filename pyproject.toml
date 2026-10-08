@@ -31,9 +31,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/drek124/vibes-api"
-Repository = "https://github.com/drek124/vibes-api"
-Issues = "https://github.com/drek124/vibes-api/issues"
+Homepage = "https://github.com/drek124/vibes"
+Repository = "https://github.com/drek124/vibes"
+Issues = "https://github.com/drek124/vibes/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["vibes"]

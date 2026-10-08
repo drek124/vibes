@@ -17,9 +17,6 @@ class StreamChannel:
     def __str__(self):
         return self.username
 
-
-
-
 class Stream:
     def __init__(self, data: dict, c):
         self._client = c
@@ -36,10 +33,6 @@ class Stream:
         self.url: str = data.get('url')
         self.channel = StreamChannel(data.get('channel') or {})
         self.chat = StreamChat(self)
-
-
-
-
     
 class StreamChat:
     def __init__(self, stream):

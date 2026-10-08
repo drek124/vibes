@@ -1,11 +1,11 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
-import datetime
-from .users import User, Viewer
-
 if TYPE_CHECKING:
     from .streams import Stream
+
+import datetime
+from .users import User, Viewer
 
 
 class MessageReference:
@@ -24,6 +24,7 @@ class Message:
         self.stream: Stream = data.get('stream')
         self.content: str = data.get('content')
 
+        data['author']['stream'] = self.stream
         self.author: Viewer = Viewer(data['author'], c)
         self.reference: MessageReference | None = MessageReference(data['replyTo']) if data.get('replyTo') else None
         self.type: str = data.get('type')
