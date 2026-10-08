@@ -1,0 +1,40 @@
+# Bytecompiled / optimized
+*__pycache__*
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+
+# IDE
+tempCodeRunnerFile.*
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing / coverage
+run.bat
+.test/
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# mypy / ruff
+.mypy_cache/
+.ruff_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+build.bat
