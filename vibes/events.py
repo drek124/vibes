@@ -54,8 +54,13 @@ async def chat_message(client, handlers: list, message: dict):
     data['streamer'] = streamer
     data['stream'] = streamer.stream
 
-    author = await client.fetch_user(data['user']['id'], raw=True)
-    data['author'] = Viewer(author | data['user'], client)
+
+
+    uid = (data.get('user') or {}).get('id')
+    if uid:
+        author = await client.fetch_user(data['user']['id'], raw=True)
+        data['author'] = Viewer(author | data['user'], client)
+    
 
     if data.get('replyTo'):
         rauthor = await client.fetch_user(data['replyTo']['username'])

@@ -33,6 +33,10 @@ class User:
         self.stream: Stream | None = Stream(stream, c) if stream else None
         self.premium = PremiumSubscription(data.get('premium') or {})
 
+
+    
+
+
     def __str__(self):
         return self.username
 

@@ -1,15 +1,30 @@
 import json
 import traceback
 import asyncio
+from types import CoroutineType
 import httpx
 import datetime
 import websockets
 import logging
-from typing import Callable
+import sys
+import importlib
+from typing import Callable, Coroutine
 from .streams import Stream, StreamCategory, StreamChannel
 from .users import User, ClientUser
 from .cache import CACHED_USERS, CACHED_USERS_EXPIRY
 from .messaging import Message
+from . import events
+
+from .ext import Extension
+from .ext.errors import (
+    ExtensionAlreadyLoaded,
+    ExtensionFailed,
+    ExtensionNotFound,
+    NoEntryPointError,
+)
+from .ext.listeners import _add_event_listener
+from .ext.listeners import _LISTENERS as _EXT_LISTENERS
+
 from .commands import (
     CommandError, 
     NoPermission, 
@@ -18,9 +33,10 @@ from .commands import (
     CommandNotFound, 
     Command,
     Context,
-    _COMMANDS
+    _COMMANDS,
+    _EXT_COMMANDS
+    
 )
-from . import events
 
 BASE_URL = 'https://backend.vibes.stream/api/v1/'
 WEBSOCKET_URL = 'wss://backend.vibes.stream/api/ws'
@@ -201,6 +217,7 @@ class Client(PassiveClient):
         """
         self._token = token
         super().__init__(token)
+        self._extensions = {}
         self._event_handlers: dict = {
             "error": []
         }
@@ -213,6 +230,20 @@ class Client(PassiveClient):
         self.prefix: str = prefix
         self._ws: websockets.ClientConnection = None
         self.user: ClientUser = None
+
+
+    @property
+    def _all_event_listeners(self) -> dict:
+        # All event listeners, global & in extensions.
+        combined = {}
+        dicts = ([dict(d) for d in _EXT_LISTENERS.values()] if _EXT_LISTENERS else []) + [self._event_handlers]
+        for d in dicts:
+            for key, value in d.items():
+                if key not in combined:
+                    combined[key] = []
+                for listener in value:
+                    combined[key].append(listener)
+        return combined
 
     async def subscribe_to(self, user: User | StreamChannel):
         """Subscribe to a user's stream events"""
@@ -229,8 +260,160 @@ class Client(PassiveClient):
             raise ValueError("Client isn't running")
         await self._ws.send(json.dumps({'type':'unsubscribe', 'data': {'username': user.username}}))
 
-    def event(self, event: str = MISSING):
+
+    async def add_ext(self, extension: Extension):
+        """Add an extension to the client"""
+
+        if not isinstance(extension, Extension):
+            raise TypeError("Extensions must be of the \"Extension\" type; use as \"class MyExt(Extension)\"")
+
+        ext_name = type(extension).__module__      
+        if ext_name == '__main__':
+            raise ValueError("Extensions can't be in the main file")
+
+        for name in dir(extension):
+            method = getattr(extension, name)
+            if not getattr(method, "_is_event_listener", False):
+                continue
+
+            event_name = method._event_name
+            _EXT_LISTENERS.setdefault(ext_name, {}).setdefault(event_name, []).append(method)
+
+        await extension.cog_load()
+
+
+
+    async def load_extension(self, name: str, package: str = None) -> None:
+        """
+        Loads an extension.
+
+        An extension is a python module that contains commands and/or
+        listeners.
+
+        An extension must have a global async function `setup` defined as
+        the entry point on what to do when the extension is loaded.
+
+        
+        ### Example
+        ```python
+        class MyExtension():
+            ...
+        async def setup(client):
+            await client.add_ext(MyExtension(client))
+            print("Extension loaded")
+        ```
+
+        ### Parameters
+        - name:
+            The extension name to load. It must be dot separated like
+            regular Python imports if it's a sub-module. (e.g.
+            `ext.test` if you want to import `ext/test.py`).
+        - package:
+            The package name to resolve relative imports with.
+            This is required when loading an extension using a relative path, e.g `.pac.test`.
+
+
+        ### Raises
+        ExtensionNotFound
+            The extension could not be imported because it wasn't found/resolved.
+        ExtensionAlreadyLoaded
+            The extension is already loaded.
+        NoEntryPointError
+            The extension doesn't have the `setup` function.
+        ExtensionFailed
+            The extension or its `setup` had an execution error.
+    
+            
+        _*inspired by [discord.py](https://github.com/Rapptz/discord.py/) 💙*_ 
+        """
+
+        try: # Resolving the name
+            name = importlib.util.resolve_name(name, package)
+        except ImportError:
+            raise ExtensionNotFound(name)
+
+        if name in self._extensions:
+            raise ExtensionAlreadyLoaded(name)
+
+        spec = importlib.util.find_spec(name)
+        if spec is None:
+            raise ExtensionNotFound(name)
+
+        await self._load_from_module_spec(spec, name)
+
+    async def _load_from_module_spec(self, spec: importlib.machinery.ModuleSpec, key: str) -> None:
+        lib = importlib.util.module_from_spec(spec)
+        sys.modules[key] = lib
+        try:
+            spec.loader.exec_module(lib)  
+        except Exception as e:
+            del sys.modules[key]
+            raise ExtensionFailed(key, e) from e
+
+        try:
+            setup = getattr(lib, 'setup')
+        except AttributeError:
+            del sys.modules[key]
+            raise NoEntryPointError(key)
+                
+
+        try:
+            await setup(self)
+            self._extensions[key] = lib
+        except Exception as e: # TODO
+            await self._remove_ext(key)
+            
+            raise ExtensionFailed(key, e) from e
+
+    async def unload_extension(self, name: str, package: str = None):
+        """
+        Unloads an extension.
+        
+        When an extension is unloaded, all its commands & event listeners will be removed.
+        ### Parameters
+        - name:
+            The extension name to load. It must be dot separated like
+            regular Python imports if it's a sub-module. (e.g.
+            `ext.test` if you want to import `ext/test.py`).
+        - package:
+            The package name to resolve relative imports with.
+            This is required when loading an extension using a relative path, e.g `.pac.test`.
+
+        ### Raises
+        - ExtensionNotFound: If the extension wasn't found, or isn't loaded.
+        """
+
+
+        try: # Resolving the name
+            name = importlib.util.resolve_name(name, package)
+        except ImportError:
+            raise ExtensionNotFound("Not found:" + name)
+        lib = self.__extensions.get(name)
+        if name not in self._extensions:
+            raise ExtensionNotFound("Not loaded:" + name)
+        await self._remove_ext(name)
+
+    async def _remove_ext(self, name: str):
+        # Unload from the client
+        self._extensions.pop(name, None)
+        sys.modules.pop(name, None)
+        
+        cmds = _EXT_COMMANDS.get(name, [])
+
+        for cmd in cmds:
+            _COMMANDS.remove(cmd)
+
+        if cmds:
+            _EXT_COMMANDS.pop(name)
+
+        if name in _EXT_LISTENERS:
+            _EXT_LISTENERS.pop(name)
+
+
+    def event(self, event: str = None):
         """Add an event listener.
+        ### Parameters
+        - event: The name of the event. If `None`, the name of the callback will be taken instead.
         ### Example
         ```python
         @client.event()
@@ -240,24 +423,9 @@ class Client(PassiveClient):
         
         def decorator(func: Callable):
             nonlocal event
-            if event is MISSING:
-                event = func.__name__.lower()
-            else:
-                event = event.lower()
+            _add_event_listener(event, self._event_handlers, func)
 
-            event = events.ALTERNATIVES.get(event) or event
-            if event not in self._event_handlers:
-                self._event_handlers[event] = []
-
-            handlers = self._event_handlers[event]
-            if func in handlers:
-                raise ValueError("Event listener is already listening to this event")
-            
-            handlers.append(func)
-
-            def wrapper(*args, **kwargs):
-                return func(*args, **kwargs)
-            return wrapper
+            return func
         return decorator
 
 
@@ -321,15 +489,17 @@ class Client(PassiveClient):
         event_type: str = kwargs['type']
         data: dict = kwargs['data']
 
-        if event_type in self._event_handlers:
+
+        listeners = self._all_event_listeners
+        if event_type in listeners:
             handler = EVENT_HANDLERS.get(event_type, _default_event_handler)
-            to_call: list = await handler(self, self._event_handlers[event_type], data)
+            to_call: list = await handler(self, listeners[event_type], data)
         else:
             to_call = []
 
 
-        if '_debug_' in self._event_handlers:
-            to_call += await events.debug_websocket(self, self._event_handlers['_debug_'], data)
+        if '_debug_' in listeners:
+            to_call += await events.debug_websocket(self, listeners['_debug_'], data)
             
         if to_call:
             r = await asyncio.gather(*to_call, return_exceptions=True)
@@ -398,7 +568,7 @@ class Client(PassiveClient):
             
         except Exception as e:
             # Logic exceptions need to be shown to the developer
-            if 'command_error' in self._event_handlers:
+            if 'command_error' in self._all_event_listeners:
                 await self._trigevent(type='command_error', data={'error': e})
                 return
             

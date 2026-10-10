@@ -30,8 +30,9 @@ class Command:
     def __str__(self):
         return self.name
 
-_COMMANDS: list[Command] = []
 
+_COMMANDS: list[Command] = []
+_EXT_COMMANDS: dict[str, list[Command]] = {}
 class CommandParameter:
     def __init__(self, **data):
         self.name: str = data['name']
@@ -120,8 +121,19 @@ def command(name: str = MISSING, *, role: Role = Role.VIEWER):
                 )
             )
 
+        obj = Command(name=name, callback=func, required_role=role, params=processed_params)
+        _COMMANDS.append(obj)
 
-        _COMMANDS.append(Command(name=name, callback=func, required_role=role, params=processed_params))
+        # Detect if its in an extension; this way we can remove them if we decide to unload an extension
+
+        qname = func.__qualname__
+        if '.' in qname:
+            _ext = qname.split('.')[0]
+            print("EXTENSIONED COMMAND!", _ext) # TODO remove after confirmation
+            if _ext not in _EXT_COMMANDS:
+                _EXT_COMMANDS[_ext] = []
+
+            _EXT_COMMANDS[_ext].append(obj)
 
         def wrapper(*args, **kwargs):
             return func(*args, **kwargs)
