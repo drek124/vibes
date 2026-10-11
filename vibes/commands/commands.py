@@ -6,7 +6,8 @@ from inspect import Parameter
 from typing import get_args, get_origin, Union
 
 from .params import _ALLOWED_CLASSES
-from ..users import Role
+from ..users import Role, Viewer
+from .cooldown import Cooldown
 from typing import Callable
 
 # TODO: implement cooldowns
@@ -23,6 +24,7 @@ class Command:
         self.callback = data['callback']
         self.required_role: Role = data['required_role']
         self.parameters: list[CommandParameter] = data['params']
+        self.cooldown: Cooldown | None = data['cooldown']
 
 
     async def callback(self, *args):
@@ -35,6 +37,7 @@ class Command:
 
 _COMMANDS: list[Command] = []
 _EXT_COMMANDS: dict[str, list[Command]] = {}
+_COMMAND_USES: dict[Viewer, dict] = {}
 
 class CommandParameter:
     def __init__(self, **data):
@@ -49,10 +52,14 @@ class CommandParameter:
 
 
 
-def command(name: str = MISSING, *, role: Role = Role.VIEWER, **kwargs):
+def command(name: str = MISSING, *, role: Role = Role.VIEWER, cooldown: Cooldown = None, **kwargs):
     """Create a new text command.
     - name: The name of the command; if missing, the name of the callback will be used instead
-    - role: The minimum required role that can access this command.
+    - role: The minimum required role that can access this command. The available roles:
+       - `Role.VIEWER`
+       - `Role.MOD`
+       - `Role.STREAMER`
+    - cooldown: The cooldown rule of the command
     ### Example
     ```python
 
@@ -75,12 +82,12 @@ def command(name: str = MISSING, *, role: Role = Role.VIEWER, **kwargs):
         qname = func.__qualname__
         if '.' in qname and not kwargs.get('ext'): # If in an unloaded extension
             func._is_command = True
-            func._command_args = {'name': name, 'role': role} | kwargs
+            func._command_args = {'name': name, 'role': role, 'cooldown': cooldown} | kwargs
             return func
 
         for command in _COMMANDS:
             if command.name == name:
-                raise ValueError(f"The command \"{name}\" already exists.")
+                raise ValueError(f"The text command \"{name}\" already exists.")
 
         params: dict = inspect.signature(func).parameters
 
@@ -91,12 +98,8 @@ def command(name: str = MISSING, *, role: Role = Role.VIEWER, **kwargs):
             if i == 0: # Ignore the "ctx" param
                 continue
 
-            if param.kind not  in (Parameter.POSITIONAL_ONLY, Parameter.POSITIONAL_OR_KEYWORD):
-                raise ValueError("A command callback can't process \"*args\" or \"*kwargs\" parameters")
-
-            if param.kind is Parameter.KEYWORD_ONLY:
-                raise ValueError("A command callback musn't have non-positional arguments.")
-
+            if param.kind not in (Parameter.POSITIONAL_ONLY, Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY):
+                raise ValueError("A command callback can't process \"*args\", \"*kwargs\" or non-positional parameters")
 
             
             ptype = param.annotation
@@ -129,7 +132,7 @@ def command(name: str = MISSING, *, role: Role = Role.VIEWER, **kwargs):
                 )
             )
 
-        obj = Command(name=name, callback=func, required_role=role, params=processed_params)
+        obj = Command(name=name, callback=func, required_role=role, cooldown=cooldown, params=processed_params)
         _COMMANDS.append(obj)
 
         # Detect if its in an extension; this way we can remove them if we decide to unload an extension

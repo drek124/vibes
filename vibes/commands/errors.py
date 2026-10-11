@@ -1,8 +1,7 @@
 from .commands import CommandParameter
 from .context import Context
 from ..users import Role
-import drekord
-
+from .cooldown import Cooldown
 class CommandError(Exception):
     """
     Universal Command Error class.
@@ -42,8 +41,18 @@ class MissingArguments(CommandError):
 
 
 class CommandNotFound(CommandError):
+    "The exception raised when the user enters a command thats doesn't exist"
     def __init__(self, *args, ctx):
         super().__init__(*args, ctx=ctx)
+
+
+class OnCooldown(CommandError):
+    "The exception raised when the target is on cooldown"
+    def __init__(self, *args, ctx, cd, available_after):
+        self.cooldown: Cooldown = cd
+        self.available_after: float = available_after
+        super().__init__(*args, ctx=ctx)
+
 
 
 __all__ = [
@@ -51,5 +60,6 @@ __all__ = [
     "NoPermission",
     "BadArgument",
     "MissingArguments",
-    "CommandNotFound"
+    "CommandNotFound",
+    "OnCooldown"
 ]

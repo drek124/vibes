@@ -31,11 +31,14 @@ from .commands import (
     BadArgument, 
     MissingArguments, 
     CommandNotFound, 
+    OnCooldown,
     Command,
     Context,
     _COMMANDS,
     _EXT_COMMANDS,
-    command
+    _COMMAND_USES,
+    command,
+    Cooldown
     
 )
 
@@ -234,6 +237,15 @@ class Client(PassiveClient):
 
 
     @property
+    def commands(self) -> list[Command]:
+        """The client's text commands"""
+        return _COMMANDS
+
+    @property
+    def is_running(self) -> bool:
+        return self._ws is not None
+
+    @property
     def _all_event_listeners(self) -> dict:
         # All event listeners, global & in extensions.
         combined = {}
@@ -266,11 +278,14 @@ class Client(PassiveClient):
         """Add an extension to the client"""
 
         if not isinstance(extension, Extension):
-            raise TypeError("Extensions must be of the \"Extension\" type; use as \"class MyExt(Extension)\"")
+            raise TypeError("Extensions must be of the \"Extension\" type; use like \"class MyExt(Extension)\"")
 
         ext_name = type(extension).__module__      
         if ext_name == '__main__':
             raise ValueError("Extensions can't be in the main file")
+        
+        if ext_name not in self._extensions:
+            raise ExtensionNotFound(ext_name)
 
         for name in dir(extension):
             method = getattr(extension, name)
@@ -283,10 +298,9 @@ class Client(PassiveClient):
                 args: dict = method._command_args | {'ext': ext_name}
                 command(**args)(method)
 
-        if ext_name not in self._extensions:
-            self._extensions[ext_name] = {}
-        self._extensions[ext_name]['obj'] = extension
 
+       
+        self._extensions[ext_name]['obj'] = extension
         await extension.ext_load()
 
 
@@ -366,11 +380,11 @@ class Client(PassiveClient):
                 
 
         try:
-            await setup(self)
             self._extensions[key] = {'lib': lib}
-        except Exception as e: # TODO
+            await setup(self)
+
+        except Exception as e: 
             await self._remove_ext(key)
-            
             raise ExtensionFailed(key, e) from e
 
     async def unload_extension(self, name: str, package: str = None):
@@ -405,7 +419,7 @@ class Client(PassiveClient):
         # Unload from the client
         obj: Extension = self._extensions[name].get('obj')
         if obj:
-            # TODO this doesnt work
+
             await obj.ext_unload()
 
         self._extensions.pop(name, None)
@@ -466,7 +480,6 @@ class Client(PassiveClient):
             async def _close():
                 self._ws = None
                 await ws.close()
-                await self.client.aclose()
                 heartbeat_task.cancel()
                 await asyncio.gather(heartbeat_task, return_exceptions=True)
             
@@ -576,6 +589,39 @@ class Client(PassiveClient):
 
                     except (ValueError):
                         raise BadArgument(ctx=context, badarg=param)
+
+
+
+            # Cooldown Handling
+            cd = command.cooldown
+            if cd:
+                if cd.target == Cooldown.VIEWER:
+                    tid = context.author.viewer_id
+                elif cd.target == Cooldown.USER:
+                    tid = context.author.id
+                elif cd.target == Cooldown.CHAT:
+                    tid = context.stream.id
+
+                all_uses = _COMMAND_USES.setdefault(tid, {})
+                uses = all_uses.setdefault(command.name, {})
+
+                times = uses.get('uses', 0)
+                last_use = uses.get('last_use', datetime.datetime.fromtimestamp(0))
+                now = datetime.datetime.now()
+
+                if times > 0:
+                    diff = (now - last_use).total_seconds()
+                    if diff > cd.period:
+                        times = 0
+                        uses['last_use'] = now
+                    elif times >= cd.max_uses:
+                        raise OnCooldown(ctx=context, cd=cd,
+                                        available_after=cd.period - diff)
+                else:
+                    uses['last_use'] = now
+
+                uses['uses'] = times + 1
+                
 
             await command.callback(*_to_pass)
         except CommandError as e:

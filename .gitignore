@@ -23,10 +23,10 @@ tempCodeRunnerFile.*
 *.swo
 
 # Testing / coverage
+tests/
 out.log
 run.bat
 test.py
-.test/
 .pytest_cache/
 htmlcov/
 .coverage

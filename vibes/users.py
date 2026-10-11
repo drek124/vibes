@@ -11,7 +11,7 @@ from .streams import Stream
 ROLE_LEVELS = {
     'viewer': 1,
     'moderator': 10,
-    'streamer': 20
+    'owner': 20
 }
 
 
@@ -71,9 +71,10 @@ class Viewer(User):
 
     @property
     def viewer_id(self) -> str:
-        """Get the viewer ID in the stream.
+        """The per-stream Viewer ID.
         *Useful for background tasks regarding a per-stream user check*
         """
+        return self.attending_stream + '-' + self.id
         return '-'.join([self.attending_stream.id, self.id])
 
 @total_ordering
@@ -103,5 +104,5 @@ class Role:
 
 Role.VIEWER = Role({'name': 'viewer'})
 Role.MOD = Role({'name': 'moderator'})
-Role.STREAMER = Role({'name': 'streamer'})
+Role.STREAMER = Role({'name': 'owner'})
 
