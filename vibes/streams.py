@@ -55,5 +55,5 @@ class StreamChat:
 
 
 
-        return Message(data, self.stream._client) #
+        return Message(data)
 

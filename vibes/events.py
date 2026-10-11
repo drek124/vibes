@@ -66,7 +66,7 @@ async def chat_message(client, handlers: list, message: dict):
         rauthor = await client.fetch_user(data['replyTo']['username'])
         data['replyTo']['author'] = rauthor
 
-    obj = Message(data, client)
+    obj = Message(data)
 
     return [
         c(obj) for c in handlers

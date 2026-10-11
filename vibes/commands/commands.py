@@ -9,6 +9,7 @@ from .params import _ALLOWED_CLASSES
 from ..users import Role
 from typing import Callable
 
+# TODO: implement cooldowns
 
 MISSING = object()
 
@@ -25,6 +26,7 @@ class Command:
 
 
     async def callback(self, *args):
+        # i mean its impossible for this error to be raised lol
         raise NotImplementedError("No callback has been implemented for this command")
 
     def __str__(self):
@@ -33,6 +35,7 @@ class Command:
 
 _COMMANDS: list[Command] = []
 _EXT_COMMANDS: dict[str, list[Command]] = {}
+
 class CommandParameter:
     def __init__(self, **data):
         self.name: str = data['name']
@@ -42,11 +45,11 @@ class CommandParameter:
         self._process = _ALLOWED_CLASSES[self._type]
 
     async def _process(self, text: str):
-        raise NotImplementedError() # This shouldn't be raised anyway
+        raise NotImplementedError() # This can't be raised anyway
 
 
 
-def command(name: str = MISSING, *, role: Role = Role.VIEWER):
+def command(name: str = MISSING, *, role: Role = Role.VIEWER, **kwargs):
     """Create a new text command.
     - name: The name of the command; if missing, the name of the callback will be used instead
     - role: The minimum required role that can access this command.
@@ -69,6 +72,11 @@ def command(name: str = MISSING, *, role: Role = Role.VIEWER):
         else:
             name = name.lower()
 
+        qname = func.__qualname__
+        if '.' in qname and not kwargs.get('ext'): # If in an unloaded extension
+            func._is_command = True
+            func._command_args = {'name': name, 'role': role} | kwargs
+            return func
 
         for command in _COMMANDS:
             if command.name == name:
@@ -78,8 +86,8 @@ def command(name: str = MISSING, *, role: Role = Role.VIEWER):
 
         processed_params: list[CommandParameter] = []
 
-        for i, pname, param in enumerate(params.items()):
-
+        for i, _p in enumerate(params.items()):
+            pname, param = _p 
             if i == 0: # Ignore the "ctx" param
                 continue
 
@@ -125,19 +133,14 @@ def command(name: str = MISSING, *, role: Role = Role.VIEWER):
         _COMMANDS.append(obj)
 
         # Detect if its in an extension; this way we can remove them if we decide to unload an extension
-
-        qname = func.__qualname__
         if '.' in qname:
-            _ext = qname.split('.')[0]
-            print("EXTENSIONED COMMAND!", _ext) # TODO remove after confirmation
+            _ext = kwargs['ext']
             if _ext not in _EXT_COMMANDS:
                 _EXT_COMMANDS[_ext] = []
 
             _EXT_COMMANDS[_ext].append(obj)
 
-        def wrapper(*args, **kwargs):
-            return func(*args, **kwargs)
-        return wrapper
+        return func
     
     return decorator
 

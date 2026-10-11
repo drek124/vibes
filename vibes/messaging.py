@@ -19,7 +19,7 @@ class MessageReference:
 
 class Message:
     "A message sent in a stream chat"
-    def __init__(self, data: dict, c):
+    def __init__(self, data: dict):
         self.id: str = data['id']
         self._d: dict = data
 
@@ -47,6 +47,19 @@ class Message:
     
     async def reply(self, content: str) -> Message:
         """Reply to the message"""
+        c = self.stream._client.client
+        response = await c.post(f'channels/{self.stream.channel.username}/messages', 
+                                json={'content': content, 'replyTo': {'id': self.id}})
+        response.raise_for_status()
+
+        # TODO make sure response is proper
+        data = response.json()
+
+        data['stream'] = self.stream
+
+
+
+        return Message(data)
 
 
 

@@ -7,5 +7,10 @@ from .errors import *
 
 
 class Extension:
-    async def cog_load(self):
+    async def ext_load(self):
+        """The callback that's called when the extension is loaded"""
+        pass
+
+    async def ext_unload(self):
+        """The callback that's called when the extension has been unloaded"""
         pass

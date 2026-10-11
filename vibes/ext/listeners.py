@@ -24,7 +24,7 @@ def _add_event_listener(event:str, handlers: dict, func):
     handlers.append(func)
 
 def event_listener(event: str = None):
-    """Add an event listener in an extension.
+    """Add an event listener **in an extension**.
     ### Parameters
     - event: The name of the event. If `None`, the name of the callback will be taken instead.
     ### Example
@@ -36,23 +36,16 @@ def event_listener(event: str = None):
     
     def decorator(func: Callable):
         nonlocal event
+
+        qname = func.__qualname__
+        if '.' not in qname:
+            raise ValueError("This event listener isn't in an extension. Use \"@client.event()\" instead.")
+
         func._is_event_listener = True
         event = event or func.__name__
         func._event_name = events.ALTERNATIVES.get(event) or event
 
         return func
     
-    # def decorator(func: Callable):
-    #     nonlocal event
-    #     qname = func.__qualname__
-    #     if '.' not in qname:
-    #         raise ValueError("This event listener isn't in an extension. Use \"@client.event()\" instead.")
-    #     _ext = qname.split('.')[0]
-    #     if _ext not in _LISTENERS:
-    #         _LISTENERS[_ext] = {}
-
-    #     _add_event_listener(event, _LISTENERS[_ext], func)
-
-    #     return func
     
     return decorator

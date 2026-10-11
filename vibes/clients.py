@@ -34,7 +34,8 @@ from .commands import (
     Command,
     Context,
     _COMMANDS,
-    _EXT_COMMANDS
+    _EXT_COMMANDS,
+    command
     
 )
 
@@ -56,7 +57,7 @@ async def _error_event_handler(client, handlers: list, message: dict):
     logging.warning(f"Server sent an error:\n \"{message["data"]["message"]}\"")
 
     return [
-        c(message["data"]) for c in handlers
+        c(message) for c in handlers
     ]
 
 EVENT_HANDLERS = {
@@ -70,7 +71,7 @@ EVENT_HANDLERS = {
     'chat_message_deleted': events.chat_message_deleted,
 
     "command_error": events.command_error,
-    "_debug_": events.debug_websocket
+    "_debug": events.debug_websocket
 
 }
 
@@ -195,7 +196,7 @@ class PassiveClient:
         
 
 class Client(PassiveClient):
-    def __init__(self, token, prefix: str = None):
+    def __init__(self, token, *, prefix: str = None):
         """## VIBES Client
         Initialize a WebSocket client to VIBES. Make sure to call `.start()` to establish the connection.
         ### Parameters 
@@ -273,13 +274,20 @@ class Client(PassiveClient):
 
         for name in dir(extension):
             method = getattr(extension, name)
-            if not getattr(method, "_is_event_listener", False):
-                continue
+            if getattr(method, "_is_event_listener", False):
 
-            event_name = method._event_name
-            _EXT_LISTENERS.setdefault(ext_name, {}).setdefault(event_name, []).append(method)
+                event_name = method._event_name
+                _EXT_LISTENERS.setdefault(ext_name, {}).setdefault(event_name, []).append(method)
+            
+            if getattr(method, "_is_command", False):
+                args: dict = method._command_args | {'ext': ext_name}
+                command(**args)(method)
 
-        await extension.cog_load()
+        if ext_name not in self._extensions:
+            self._extensions[ext_name] = {}
+        self._extensions[ext_name]['obj'] = extension
+
+        await extension.ext_load()
 
 
 
@@ -359,7 +367,7 @@ class Client(PassiveClient):
 
         try:
             await setup(self)
-            self._extensions[key] = lib
+            self._extensions[key] = {'lib': lib}
         except Exception as e: # TODO
             await self._remove_ext(key)
             
@@ -388,13 +396,18 @@ class Client(PassiveClient):
             name = importlib.util.resolve_name(name, package)
         except ImportError:
             raise ExtensionNotFound("Not found:" + name)
-        lib = self.__extensions.get(name)
+
         if name not in self._extensions:
             raise ExtensionNotFound("Not loaded:" + name)
         await self._remove_ext(name)
 
     async def _remove_ext(self, name: str):
         # Unload from the client
+        obj: Extension = self._extensions[name].get('obj')
+        if obj:
+            # TODO this doesnt work
+            await obj.ext_unload()
+
         self._extensions.pop(name, None)
         sys.modules.pop(name, None)
         
@@ -498,8 +511,8 @@ class Client(PassiveClient):
             to_call = []
 
 
-        if '_debug_' in listeners:
-            to_call += await events.debug_websocket(self, listeners['_debug_'], data)
+        if '_debug' in listeners:
+            to_call += await events.debug_websocket(self, listeners['_debug'], data)
             
         if to_call:
             r = await asyncio.gather(*to_call, return_exceptions=True)
@@ -542,26 +555,29 @@ class Client(PassiveClient):
             if len(content) < len([p for p in params if p.required]):
                 raise MissingArguments(ctx=context)
 
-            diff = len(content) - len(params)
-            if diff > 0: # If split is out of range of the command params
-                _reserve = []
-                for ii, item in enumerate(content.copy(), 1):
-                    if ii <= len(content) - diff:
-                        _reserve.append(item)
-                        content.remove(item)
-                content = _reserve + [' '.join(content)]
-
             _to_pass = [context]
 
-            for ii, item in enumerate(content):
-                try:
-                    param = params[ii]
-                    conversion = await param._process(item)
-                    _to_pass.append(conversion)
+            if params:
+                diff = len(content) - len(params)
+                if diff > 0: # If split is out of range of the command params
+                    _reserve = []
+                    for ii, item in enumerate(content.copy(), 1):
+                        if ii <= len(content) - diff:
+                            _reserve.append(item)
+                            content.remove(item)
+                    content = _reserve + [' '.join(content)]
 
-                except (ValueError):
-                    raise BadArgument(ctx=context, badarg=param)
 
+                for ii, item in enumerate(content):
+                    try:
+                        param = params[ii]
+                        conversion = await param._process(item)
+                        _to_pass.append(conversion)
+
+                    except (ValueError):
+                        raise BadArgument(ctx=context, badarg=param)
+
+            await command.callback(*_to_pass)
         except CommandError as e:
             # If there are no on_command_error listeners, swallow user-input related exceptions B)
             await self._trigevent(type='command_error', data={'error': e})

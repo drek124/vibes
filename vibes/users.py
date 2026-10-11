@@ -66,7 +66,7 @@ class Viewer(User):
         self.avatar_url: str = data.get('avatarUrl')
         self.attending_stream: Stream = data.get('stream')
         role = data.get('role', 'viewer')
-        self.role: Role = data.get('role') 
+        self.role = Role({'name': role})
         self.bot: bool = data.get('bot')
 
     @property
