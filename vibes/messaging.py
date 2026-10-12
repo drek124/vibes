@@ -47,10 +47,10 @@ class Message:
     
     async def reply(self, content: str) -> Message:
         """Reply to the message"""
-        c = self.stream._client.client
-        response = await c.post(f'channels/{self.stream.channel.username}/messages', 
-                                json={'content': content, 'replyTo': {'id': self.id}})
-        response.raise_for_status()
+        response = await self.stream._client.send_request(
+            self.stream._client.client.post,
+            f'channels/{self.stream.channel.username}/messages',
+            json={'content': content, 'replyTo': {'id': self.id}})
 
         # TODO make sure response is proper
         data = response.json()

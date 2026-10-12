@@ -1,14 +1,13 @@
 import json
 import traceback
 import asyncio
-from types import CoroutineType
 import httpx
 import datetime
 import websockets
 import logging
 import sys
 import importlib
-from typing import Callable, Coroutine
+from typing import Callable
 from .streams import Stream, StreamCategory, StreamChannel
 from .users import User, ClientUser
 from .cache import CACHED_USERS, CACHED_USERS_EXPIRY
@@ -24,6 +23,7 @@ from .ext.errors import (
 )
 from .ext.listeners import _add_event_listener
 from .ext.listeners import _LISTENERS as _EXT_LISTENERS
+from .errors import *
 
 from .commands import (
     CommandError, 
@@ -46,10 +46,7 @@ BASE_URL = 'https://backend.vibes.stream/api/v1/'
 WEBSOCKET_URL = 'wss://backend.vibes.stream/api/ws'
 MISSING = object()
 
-# TODO:
-# Add a function to raise Forbidden, NotFound, etc, which would also handle rate limits
-# if res.status_code == 429:
-#    wait = int(res.headers.get("Retry-After", 60))
+
 
 async def _default_event_handler(client, handlers: list, message: dict):
     return [
@@ -137,10 +134,37 @@ class PassiveClient:
         """Close the client"""
         await self.client.aclose()
 
+    async def send_request(self, coro, *args, **kwargs):
+        """Send an API request to VIBES and handle rate limits and common errors.
+
+        ### Parameters
+        - coro: The httpx request callable (e.g. `self.client.get`).
+        - `*args`, `**kwargs`: Passed to `coro`.
+
+        ### Raises
+        NotFound: The server responded with 404 Not Found.
+        Forbidden: The server responded with 403 Forbidden.
+        """
+        while True:
+            response = await coro(*args, **kwargs)
+
+            if response.status_code == 429:
+                wait = int(response.headers.get("Retry-After", 60))
+                logging.warning(f"Rate limited. Retrying in {wait} seconds.")
+                await asyncio.sleep(wait)
+                continue
+
+            if response.status_code == 404:
+                raise NotFound(response)
+            if response.status_code == 403:
+                raise Forbidden(response)
+
+            response.raise_for_status()
+            return response
+
     async def fetch_client(self) -> Application:
         """Fetch your application"""
-        response = await self.client.get('me')
-        response.raise_for_status()
+        response = await self.send_request(self.client.get, 'me')
 
         return Application(response.json().get('data', {}))
 
@@ -164,14 +188,13 @@ class PassiveClient:
         if mature:
             body['mature'] = 'include'
 
-        response = await self.client.get(
+        response = await self.send_request(
+            self.client.get,
             'streams/live',
             params=body)
 
-        response.raise_for_status()
-
         data = response.json()
-        
+
         return [Stream(i, self) for i in data.get('data', [])]
 
     async def fetch_user(self, slug: str, **kwargs) -> User | None:
@@ -183,12 +206,10 @@ class PassiveClient:
             if (now - last).total_seconds() <= CACHED_USERS_EXPIRY:
                 return CACHED_USERS[slug]['obj' if not kwargs.get('raw') else 'raw']
             
-        response = await self.client.get(
-            'channels/' + slug)
-        if response.status_code == 404:
+        try:
+            response = await self.send_request(self.client.get, 'channels/' + slug)
+        except NotFound:
             return None
-        
-        response.raise_for_status()
 
         data = response.json()
         if kwargs.get('raw'):
@@ -467,8 +488,7 @@ class Client(PassiveClient):
 
         logging.info('Establishing a connection to VIBES...')
 
-        res = await self.client.get("app")
-        res.raise_for_status()
+        res = await self.send_request(self.client.get, "app")
         self.user = ClientUser(res.json()['data'], self)
         
 
