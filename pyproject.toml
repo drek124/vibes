@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vibes-client"
-version = "0.1.1"
+version = "0.1.2"
 description = "The VIBES Streaming API Wrapper"
 readme = "README.md"
 license = "MIT"
