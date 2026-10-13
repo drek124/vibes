@@ -55,16 +55,8 @@ asyncio.run(client.start())
 
 Python 3.11+ is required. Dependencies are `httpx` and `websockets`.
 
-From a checkout:
-
 ```bash
-pip install .
-```
-
-For development:
-
-```bash
-pip install -e .
+pip install vibes-client
 ```
 
 ## Quickstart
