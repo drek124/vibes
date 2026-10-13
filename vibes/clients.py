@@ -621,7 +621,7 @@ class Client(PassiveClient):
                 return
             
             content = message.content[len(self.prefix):].split(' ')
-            command: Command = next((c for c in _COMMANDS if c.name == content[0]), None)
+            command: Command = next((c for c in _COMMANDS if c.name == content[0] and not isinstance(c, AppCommand)), None)
             ctx = {
                 'message': message,
                 'client': self
@@ -688,7 +688,7 @@ class Client(PassiveClient):
             msg['message']['stream'] = streamer.stream
             msg['message']['author'] = Viewer(msg['user'], self)
             message: Message = Message(msg['message'])
-            command: AppCommand = next((c for c in _APP_COMMANDS if c.name == msg['command']), None)
+            command: AppCommand = next((c for c in _APP_COMMANDS if c.name == msg['command'] and isinstance(c, AppCommand)), None)
             ctx = {
                 'message': message,
                 'client': self,
