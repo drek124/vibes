@@ -1,6 +1,5 @@
 from .commands import CommandParameter
 from .context import Context
-from ..users import Role
 from .cooldown import Cooldown
 class CommandError(Exception):
     """

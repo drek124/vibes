@@ -33,7 +33,6 @@ from .commands import (
     BadArgument, 
     MissingArguments, 
     CommandNotFound, 
-    OnCooldown,
     Command,
     Context,
     _COMMANDS,
@@ -41,7 +40,6 @@ from .commands import (
     _APP_COMMANDS,
     command,
     app_command,
-    Cooldown,
     _process_command_cooldown
     
 )

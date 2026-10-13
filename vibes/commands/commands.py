@@ -7,7 +7,7 @@ from typing import get_args, get_origin, Union
 from typing import Callable
 
 from .params import _ALLOWED_CLASSES
-from ..users import Role, Viewer
+from ..users import Role
 from .cooldown import Cooldown
 from .context import _COMMANDS, _EXT_COMMANDS
 
