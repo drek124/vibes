@@ -7,4 +7,4 @@ class Donation:
         self.amount: float = data.get('donationAmount')
         self.amount_usd: float = data.get('amountUsd')
         self.currency: str = data.get('currency')
-        self.message: str = data.get('dontationMessage')
+        self.message: str = data.get('donationMessage')

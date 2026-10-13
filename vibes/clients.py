@@ -8,9 +8,11 @@ import logging
 import sys
 import importlib
 from typing import Callable
+
+from vibes.commands.app_commands import AppCommand
 from .streams import Stream, StreamCategory, StreamChannel
-from .users import User, ClientUser
-from .cache import CACHED_USERS, CACHED_USERS_EXPIRY
+from .users import User, ClientUser, Viewer
+from .cache import CACHED_USERS, CACHED_USERS_EXPIRY, CACHED_MESSAGES
 from .messaging import Message
 from . import events
 
@@ -36,9 +38,11 @@ from .commands import (
     Context,
     _COMMANDS,
     _EXT_COMMANDS,
-    _COMMAND_USES,
+    _APP_COMMANDS,
     command,
-    Cooldown
+    app_command,
+    Cooldown,
+    _process_command_cooldown
     
 )
 
@@ -47,10 +51,17 @@ WEBSOCKET_URL = 'wss://backend.vibes.stream/api/ws'
 MISSING = object()
 
 
+async def _cache_message(message: Message):
+    CACHED_MESSAGES[message.id] = message
 
-async def _default_event_handler(client, handlers: list, message: dict):
+async def _silent_event_handler(client, handlers: list, message: dict):
+    "An event handler that doesnt pass any arguments to listeners"
     return [
         c() for c in handlers
+    ]
+async def _default_event_handler(client, handlers: list, message: dict):
+    return [
+        c(message) for c in handlers
     ]
         
 async def _error_event_handler(client, handlers: list, message: dict):
@@ -61,6 +72,8 @@ async def _error_event_handler(client, handlers: list, message: dict):
     ]
 
 EVENT_HANDLERS = {
+    "connected": _silent_event_handler,
+
     "new_viewer": events.left_or_new_viewer,
     "viewer_left": events.left_or_new_viewer,
     "new_follower": events.new_follower,
@@ -69,6 +82,8 @@ EVENT_HANDLERS = {
     "error": _error_event_handler,
     "chat_message": events.chat_message,
     'chat_message_deleted': events.chat_message_deleted,
+    'stream_online': events.stream_online_or_offline,
+    'stream_offline': events.stream_online_or_offline,
 
     "command_error": events.command_error,
     "_debug": events.debug_websocket
@@ -134,7 +149,13 @@ class PassiveClient:
         """Close the client"""
         await self.client.aclose()
 
-    async def send_request(self, coro, *args, **kwargs):
+
+    def clear_cache(self):
+        """Clears the cached objects in the bot."""
+        CACHED_MESSAGES.clear()
+        CACHED_USERS.clear()
+        
+    async def send_request(self, coro, *args, raise_for_status: bool = True, **kwargs) -> httpx.Response:
         """Send an API request to VIBES and handle rate limits and common errors.
 
         ### Parameters
@@ -142,24 +163,27 @@ class PassiveClient:
         - `*args`, `**kwargs`: Passed to `coro`.
 
         ### Raises
-        NotFound: The server responded with 404 Not Found.
-        Forbidden: The server responded with 403 Forbidden.
+        *These are only raised if `raise_for_status` is `True`*
+        - NotFound: The server responded with 404 Not Found.
+        - Forbidden: The server responded with 403 Forbidden.
+        - httpx.HTTPStatusError: The server didn't respond with `ok`.
         """
         while True:
-            response = await coro(*args, **kwargs)
+            response: httpx.Response = await coro(*args, **kwargs)
 
             if response.status_code == 429:
-                wait = int(response.headers.get("Retry-After", 60))
+                wait = float(response.headers.get("Retry-After", 60))
                 logging.warning(f"Rate limited. Retrying in {wait} seconds.")
                 await asyncio.sleep(wait)
                 continue
 
-            if response.status_code == 404:
-                raise NotFound(response)
-            if response.status_code == 403:
-                raise Forbidden(response)
+            if raise_for_status:
+                if response.status_code == 404:
+                    raise NotFound(response)
+                if response.status_code == 403:
+                    raise Forbidden(response)
 
-            response.raise_for_status()
+                response.raise_for_status()
             return response
 
     async def fetch_client(self) -> Application:
@@ -244,7 +268,8 @@ class Client(PassiveClient):
         super().__init__(token)
         self._extensions = {}
         self._event_handlers: dict = {
-            "error": []
+            "error": [],
+            "chat_message": [_cache_message]
         }
         if prefix is not None:
             if prefix == '':
@@ -261,6 +286,11 @@ class Client(PassiveClient):
     def commands(self) -> list[Command]:
         """The client's text commands"""
         return _COMMANDS
+    
+    @property
+    def app_commands(self) -> list[AppCommand]:
+        """The client's app commands"""
+        return _APP_COMMANDS
 
     @property
     def is_running(self) -> bool:
@@ -279,7 +309,22 @@ class Client(PassiveClient):
                     combined[key].append(listener)
         return combined
 
-    async def subscribe_to(self, user: User | StreamChannel):
+    async def sync_commands(self) -> list[AppCommand]:
+        """Push & sync your app commands to VIBES"""
+        cmds = self.app_commands
+        params = {'commands': [c._meta for c in cmds]}
+
+        r = await self.send_request(self.client.put, 'app/commands', json=params)
+        data = r.json()
+
+        if data['data'].get('rejected'):
+            msg = f"The following app commands were rejected:\n {'\n'.join([f'- {d.get('name')} -> {d.get('reason')}' for d in data['data']['rejected']])}"
+            raise Forbidden(msg)
+        
+        return cmds
+
+
+    async def subscribe_to(self, user: User | StreamChannel | Viewer):
         """Subscribe to a user's stream events"""
         if not self._ws:
             raise ValueError("Client isn't running")
@@ -288,7 +333,7 @@ class Client(PassiveClient):
         
         await self._ws.send(json.dumps({'type':'subscribe', 'data': {'username': user.username}}))
 
-    async def unsubscribe_from(self, user: User | StreamChannel):
+    async def unsubscribe_from(self, user: User | StreamChannel | Viewer):
         """Unsubscribe from a user's stream events"""
         if not self._ws:
             raise ValueError("Client isn't running")
@@ -319,6 +364,9 @@ class Client(PassiveClient):
                 args: dict = method._command_args | {'ext': ext_name}
                 command(**args)(method)
 
+            if getattr(method, "_is_app_command", False):
+                args: dict = method._command_args | {'ext': ext_name}
+                app_command(**args)(method)
 
        
         self._extensions[ext_name]['obj'] = extension
@@ -413,6 +461,7 @@ class Client(PassiveClient):
         Unloads an extension.
         
         When an extension is unloaded, all its commands & event listeners will be removed.
+        - **NOTE: You have to use `client.sync_commands()` after unloading to push any command removals to VIBES.**
         ### Parameters
         - name:
             The extension name to load. It must be dot separated like
@@ -422,6 +471,7 @@ class Client(PassiveClient):
             The package name to resolve relative imports with.
             This is required when loading an extension using a relative path, e.g `.pac.test`.
 
+        
         ### Raises
         - ExtensionNotFound: If the extension wasn't found, or isn't loaded.
         """
@@ -440,22 +490,20 @@ class Client(PassiveClient):
         # Unload from the client
         obj: Extension = self._extensions[name].get('obj')
         if obj:
-
             await obj.ext_unload()
 
         self._extensions.pop(name, None)
         sys.modules.pop(name, None)
         
-        cmds = _EXT_COMMANDS.get(name, [])
+        for cmd in _EXT_COMMANDS.get(name, []):
+            for lst in (_COMMANDS, _APP_COMMANDS):
+                if cmd in lst:
+                    lst.remove(cmd)
+                    break
 
-        for cmd in cmds:
-            _COMMANDS.remove(cmd)
-
-        if cmds:
-            _EXT_COMMANDS.pop(name)
-
-        if name in _EXT_LISTENERS:
-            _EXT_LISTENERS.pop(name)
+        for d in (_EXT_LISTENERS, _EXT_COMMANDS):
+            if name in d:
+                d.pop(name)
 
 
     def event(self, event: str = None):
@@ -509,14 +557,16 @@ class Client(PassiveClient):
             async for message in ws:
                 try:
                     data: dict = json.loads(message)
-                    logging.info(message)
                     event_type = data.get('type')
 
-                    
-                    if event_type == 'reconnect':
+
+                    if event_type == 'chat_command':
+                        await self._process_app_command(data['data'])
+
+                    elif event_type == 'reconnect':
                         _data = data['data']
                         reason = _data.get('reason', 'Unknown reason')
-                        logging.info(f"Reconnect requested by server; Reason: \"{reason}\". Reconnecting...")
+                        logging.warning(f"Reconnect requested by server; Reason: \"{reason}\". Reconnecting...")
                         await self._reconnect()
 
                     try:
@@ -557,6 +607,10 @@ class Client(PassiveClient):
                     logging.error(f"Error occurred in background task:\n{tb_str}")
                     
 
+
+
+    
+
     async def process_commands(self, message: Message):
         """Process a text command.
         The client does checks to validate user input; use `on_command_error(error: CommandError | Exception)` event listener to follow-up & send feedback.
@@ -593,57 +647,27 @@ class Client(PassiveClient):
             if params:
                 diff = len(content) - len(params)
                 if diff > 0: # If split is out of range of the command params
-                    _reserve = []
-                    for ii, item in enumerate(content.copy(), 1):
-                        if ii <= len(content) - diff:
-                            _reserve.append(item)
-                            content.remove(item)
-                    content = _reserve + [' '.join(content)]
+                    # The last parameter soaks up every leftover word
+                    head = content[:len(params) - 1]
+                    content = head + [' '.join(content[len(params) - 1:])]
 
 
                 for ii, item in enumerate(content):
                     try:
                         param = params[ii]
-                        conversion = await param._process(item)
+                        conversion = await param._process(item, self)
                         _to_pass.append(conversion)
 
-                    except (ValueError):
-                        raise BadArgument(ctx=context, badarg=param)
+                    except (ValueError) as e:
+                        raise BadArgument(ctx=context, badarg=param) from e
 
 
 
             # Cooldown Handling
-            cd = command.cooldown
-            if cd:
-                if cd.target == Cooldown.VIEWER:
-                    tid = context.author.viewer_id
-                elif cd.target == Cooldown.USER:
-                    tid = context.author.id
-                elif cd.target == Cooldown.CHAT:
-                    tid = context.stream.id
-
-                all_uses = _COMMAND_USES.setdefault(tid, {})
-                uses = all_uses.setdefault(command.name, {})
-
-                times = uses.get('uses', 0)
-                last_use = uses.get('last_use', datetime.datetime.fromtimestamp(0))
-                now = datetime.datetime.now()
-
-                if times > 0:
-                    diff = (now - last_use).total_seconds()
-                    if diff > cd.period:
-                        times = 0
-                        uses['last_use'] = now
-                    elif times >= cd.max_uses:
-                        raise OnCooldown(ctx=context, cd=cd,
-                                        available_after=cd.period - diff)
-                else:
-                    uses['last_use'] = now
-
-                uses['uses'] = times + 1
-                
+            await _process_command_cooldown(command, context)
 
             await command.callback(*_to_pass)
+
         except CommandError as e:
             # If there are no on_command_error listeners, swallow user-input related exceptions B)
             await self._trigevent(type='command_error', data={'error': e})
@@ -656,3 +680,62 @@ class Client(PassiveClient):
             
             tb_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
             logging.error(f"Error occurred in command execution:\n{tb_str}")
+
+
+
+    async def _process_app_command(self, msg: dict):
+        # Processing app command
+        try:
+            msg['message']['streamer'] = streamer = await self.fetch_user(msg['streamerId'])
+            msg['message']['stream'] = streamer.stream
+            msg['message']['author'] = Viewer(msg['user'], self)
+            message: Message = Message(msg['message'])
+            command: AppCommand = next((c for c in _APP_COMMANDS if c.name == msg['command']), None)
+            ctx = {
+                'message': message,
+                'client': self,
+                'invocation_id': msg['id']
+            }
+
+
+            ctx['command'] = command
+            context = Context(ctx)
+
+            if message.author.role < command.required_role:
+                raise NoPermission(ctx=context)
+
+            params = command.parameters
+            options: dict = msg.get('options') or {}
+            
+            _to_pass = {}
+            
+            if params:
+
+                for name, item in options.items():
+
+                    # It's almost impossible to raise a ValueError since its parsed by the server, 
+                    # Which is why we remove the 'except (ValueError)'
+
+                    if item is not None: # If optional param has input
+                        param = [p for p in params if p.name == name][0]
+                        conversion = await param._process(item, self)
+                        _to_pass[name] = conversion
+
+
+            # Cooldown Handling
+            await _process_command_cooldown(command, context)
+
+            await command.callback(context, **_to_pass)
+
+        except CommandError as e:
+            # If there are no on_command_error listeners, swallow user-input related exceptions B)
+            await self._trigevent(type='command_error', data={'error': e})
+            
+        except Exception as e:
+            # Logic exceptions need to be shown to the developer
+            if 'command_error' in self._all_event_listeners:
+                await self._trigevent(type='command_error', data={'error': e})
+                return
+            
+            tb_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+            logging.error(f"Error occurred in app command execution:\n{tb_str}")

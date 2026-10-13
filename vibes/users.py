@@ -35,7 +35,10 @@ class User:
 
 
     
-
+    @property
+    def mention(self) -> str:
+        """Returns a string @'ing the user"""
+        return '@' + self.username
 
     def __str__(self):
         return self.username
@@ -64,7 +67,7 @@ class Viewer(User):
 
         self.display_name: str = data.get('displayName')
         self.avatar_url: str = data.get('avatarUrl')
-        self.attending_stream: Stream = data.get('stream')
+        self.attending_stream: Stream = self.stream
         role = data.get('role', 'viewer')
         self.role = Role({'name': role})
         self.bot: bool = data.get('bot')
@@ -74,7 +77,8 @@ class Viewer(User):
         """The per-stream Viewer ID.
         *Useful for background tasks regarding a per-stream user check*
         """
-        return self.attending_stream + '-' + self.id
+        if not self.attending_stream or not self.id:
+            return self.id
         return '-'.join([self.attending_stream.id, self.id])
 
 @total_ordering

@@ -24,7 +24,7 @@ class StreamChannel:
 class Stream:
     def __init__(self, data: dict, c):
         self._client = c
-        self.id: str = data.get('id')
+        self.id: str = data.get('streamId') or data.get('id')
         self.title: str = data.get('title')
         self.started_at = datetime.datetime.fromisoformat(
             data.get('startedAt', '1970-01-01T00:00:00Z').replace("Z", "+00:00")).astimezone()
@@ -37,6 +37,11 @@ class Stream:
         self.url: str = data.get('url')
         self.channel = StreamChannel(data.get('channel') or {})
         self.chat = StreamChat(self)
+
+    @property
+    def duration(self) -> float:
+        "The amount of seconds the stream has been running for"
+        return (datetime.datetime.now(self.started_at.tzinfo) - self.started_at).total_seconds()
     
 class StreamChat:
     def __init__(self, stream):

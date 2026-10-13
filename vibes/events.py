@@ -4,6 +4,7 @@ from .streams import Stream
 from .donations import Donation
 from .messaging import Message
 from .cache import CACHED_MESSAGES, CACHED_USERS, CACHED_USERS_EXPIRY
+# TODO add missing events
 
 ALTERNATIVES = {
 
@@ -17,6 +18,8 @@ ALTERNATIVES = {
     'on_donation': 'new_donation',
     'on_message': 'chat_message',
     'on_message_delete': 'chat_message_deleted',
+    'on_stream_online': 'stream_online',
+    'on_stream_offline': 'stream_offline',
 
 
     # --- Library events ---
@@ -24,6 +27,14 @@ ALTERNATIVES = {
     'on_command_error': 'command_error'
 
 }
+
+
+async def stream_online_or_offline(client, handlers: list, message: dict):
+    data: dict = message['data']['stream']
+    stream = Stream(data, client)
+    return [
+            c(stream) for c in handlers
+        ]
 
 async def command_error(client, handlers: list, message: dict):
     e: CommandError = message['error']
@@ -40,7 +51,8 @@ async def chat_message_deleted(client, handlers: list, message: dict):
         return [] # If not cached, nothing to give
 
     # Update streamer to latest version
-    msg.streamer = CACHED_USERS.get(msg.streamer.id, msg.streamer)
+    _streamer = CACHED_USERS.get(msg.streamer.id, msg.streamer)
+    msg.streamer = _streamer if not isinstance(_streamer, dict) else _streamer['obj']
     msg.stream = msg.streamer.stream
 
     return [
@@ -58,7 +70,7 @@ async def chat_message(client, handlers: list, message: dict):
 
     uid = (data.get('user') or {}).get('id')
     if uid:
-        author = await client.fetch_user(data['user']['id'], raw=True)
+        author = await client.fetch_user(data['user']['id'], raw=True) or {}
         data['author'] = Viewer(author | data['user'], client)
     
 

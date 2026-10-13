@@ -52,11 +52,8 @@ class Message:
             f'channels/{self.stream.channel.username}/messages',
             json={'content': content, 'replyTo': {'id': self.id}})
 
-        # TODO make sure response is proper
-        data = response.json()
-
+        data = response.json().get('data', {})
         data['stream'] = self.stream
-
 
 
         return Message(data)

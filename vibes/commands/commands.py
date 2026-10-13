@@ -4,13 +4,12 @@ import inspect
 import types
 from inspect import Parameter
 from typing import get_args, get_origin, Union
+from typing import Callable
 
 from .params import _ALLOWED_CLASSES
 from ..users import Role, Viewer
 from .cooldown import Cooldown
-from typing import Callable
-
-# TODO: implement cooldowns
+from .context import _COMMANDS, _EXT_COMMANDS
 
 MISSING = object()
 
@@ -19,8 +18,8 @@ _UNION_ORIGINS = (Union, types.UnionType)
 class Command:
     """A VIBES chat command."""
     def __init__(self, **data):
-        
         self.name: str = data['name']
+        self._slug: str = self.name
         self.callback = data['callback']
         self.required_role: Role = data['required_role']
         self.parameters: list[CommandParameter] = data['params']
@@ -35,9 +34,7 @@ class Command:
         return self.name
 
 
-_COMMANDS: list[Command] = []
-_EXT_COMMANDS: dict[str, list[Command]] = {}
-_COMMAND_USES: dict[Viewer, dict] = {}
+
 
 class CommandParameter:
     def __init__(self, **data):
@@ -45,9 +42,9 @@ class CommandParameter:
         self.required: bool = data['required']
         self._type = data['type']
 
-        self._process = _ALLOWED_CLASSES[self._type]
+        self._process = data['paramclasses'][self._type]
 
-    async def _process(self, text: str):
+    async def _process(self, *args, **kwargs):
         raise NotImplementedError() # This can't be raised anyway
 
 
@@ -120,7 +117,7 @@ def command(name: str = MISSING, *, role: Role = Role.VIEWER, cooldown: Cooldown
                     ptype = inner_origin
 
                 if ptype not in _ALLOWED_CLASSES:
-                    raise ValueError(f"Unknown parameter type \"{ptype}\" for \"{pname}\"")
+                    raise ValueError(f"Parameter type \"{ptype}\" for \"{pname}\" can't be proccessed")
             
             required: bool = param.default is Parameter.empty
 
@@ -128,7 +125,8 @@ def command(name: str = MISSING, *, role: Role = Role.VIEWER, cooldown: Cooldown
                 CommandParameter(
                     name=pname,
                     type=ptype,
-                    required=required
+                    required=required,
+                    paramclasses=_ALLOWED_CLASSES
                 )
             )
 
