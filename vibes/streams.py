@@ -13,6 +13,7 @@ class StreamCategory:
 
 class StreamChannel:
     def __init__(self, data: dict):
+        self.id: str = data['id']
         self.username: str = data.get('username')
         self.avatar_url: str = data.get('avatarUrl')
         self.url: str = data.get('url')
