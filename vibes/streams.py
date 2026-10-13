@@ -54,7 +54,6 @@ class StreamChat:
             f'channels/{self.stream.channel.username}/messages',
             json={'content': content})
 
-        # TODO make sure response is proper
         data = response.json()
 
         data['stream'] = self.stream

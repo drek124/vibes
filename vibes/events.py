@@ -4,7 +4,6 @@ from .streams import Stream
 from .donations import Donation
 from .messaging import Message
 from .cache import CACHED_MESSAGES, CACHED_USERS, CACHED_USERS_EXPIRY
-# TODO add missing events
 
 ALTERNATIVES = {
 
