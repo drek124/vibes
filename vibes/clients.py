@@ -277,6 +277,8 @@ class Client(PassiveClient):
                 
         self.prefix: str = prefix
         self._ws: websockets.ClientConnection = None
+        # Strong references to running event tasks, so they don't get garbage collected mid-run
+        self._event_tasks: set[asyncio.Task] = set()
         self.user: ClientUser = None
 
 
@@ -558,25 +560,32 @@ class Client(PassiveClient):
                     event_type = data.get('type')
 
 
-                    if event_type == 'chat_command':
-                        await self._process_app_command(data['data'])
-
-                    elif event_type == 'reconnect':
+                    if event_type == 'reconnect':
                         _data = data['data']
                         reason = _data.get('reason', 'Unknown reason')
                         logging.warning(f"Reconnect requested by server; Reason: \"{reason}\". Reconnecting...")
                         await self._reconnect()
 
-                    try:
-
-                        await self._trigevent(type=event_type, data=data)
-
-                    except Exception as e:
-                        tb_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
-                        logging.critical(f"Error occurred in preparation of background task:\n{tb_str}")
+                    # Handle every event in its own task, so a slow command or listener
+                    # (e.g. one awaiting asyncio.sleep) doesn't stop the socket from reading new events
+                    task = asyncio.create_task(self._handle_event(event_type, data))
+                    self._event_tasks.add(task)
+                    task.add_done_callback(self._event_tasks.discard)
 
                 except json.JSONDecodeError:
                     logging.warning("Failed to parse non-JSON message:" + str(message))
+
+    async def _handle_event(self, event_type: str, data: dict):
+        if event_type == 'chat_command':
+            await self._process_app_command(data['data'])
+
+        try:
+
+            await self._trigevent(type=event_type, data=data)
+
+        except Exception as e:
+            tb_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+            logging.critical(f"Error occurred in preparation of background task:\n{tb_str}")
 
 
     async def _trigevent(self, **kwargs):
